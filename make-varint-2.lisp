@@ -25,6 +25,8 @@
 (defun field-num&wire-type (varint)
    (floor varint #b1000))
 
+(defun field-type<-field-num (field-num)
+  (getf *field-type-by-field-number* field-num))
 
 
 
@@ -69,6 +71,8 @@
   (write-byte #x96 strm)
   (write-byte #x01 strm))
 
+(defparameter *field-type-by-field-number*
+  '(0 int64 1 int32))
 
 (setf test-strm (open "testdata" 
 		      :direction :input
