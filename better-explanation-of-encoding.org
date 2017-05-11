@@ -1,0 +1,150 @@
+* Protocol Buffer Coding
+This document describes the binary format of protocol buffer messages. This knowledge is not necessary to use protocol buffer messages in applications, but can be useful to understand how protocol buffer formats affect size of encoded messages.
+
+For example, given a message definition:
+
+message Test1 {
+  required int32 myvar = 1;
+}
+
+In an application, a Test1 message is created with myvar set to 161. If the message is examined as a set of bytes, the message would be:
+
+08 A1 01 ; hexadecimal
+
+What do these bytes mean? Decoding this requires understanding of "Varints".
+
+** Varints (Variable Length Integers)
+
+Varints are a method of serializing integers using one or more bytes.
+
+*** Encoding
+To encode an integer as a varint, 
+
+1. The bits required to encode the integer are split into sets of seven.
+2. These order of these seven- (or fewer) bit bytes is reversed, but each byte is not reversed.
+3. Each byte, except the last, is prepended with a "1" bit. The last byte is prepended with a "0".
+
+**** Examples:
+
+120 is encoded as
+
+1111000  ; only seven bits are required to encode the value
+01111000 ; the list of one byte is "reversed".
+01111000 ; the leading bit is set to "0", since no further bits are needed.
+
+(In decimal: 120)
+In hexadecimal: 78
+
+131 is encoded as
+
+10000011 ; more than seven bits are required to encode the value
+0000001 0000011 ; the bits are divided into sets of seven.
+0000011 0000001 ; the list of seven-bit bytes is reversed.
+10000011 00000001 ; a "1" is prepended to all but the last seven-bit bytes, and the last is prepended with a "0".
+
+In decimal: 33537
+In hexadecimal: 83 01
+
+
+*** Decoding
+To decode a varint:
+
+1. Bytes are collected until, and including, a byte with its most significant bit set to "0".  This might be the first byte.
+2. The order of the bytes (but not the bits in each byte) is reversed.
+3. The most significant bit of each byte is discarded. However, all other leading zeroes in each byte are retained.
+4. The remaining sets of seven bits of each byte are concatenated.
+
+**** Examples: 
+
+#x7D is decoded as
+
+1. #b01111101 ; this byte is the last; the most significant bit is "0"
+2. #b01111101 ; the list of one byte is "reversed".
+3. #b1111101 ; the most significant bit is discarded.
+
+In decimal: 125
+
+
+#xFF7A is decoded as
+
+
+1. 11111111 01111010; the MSB of the first byte is "1".  That of the second byte is "0", so that byte is the last.
+2. 1111111 1111010; the MSB of each byte is dicarded.
+3. 11111111111010; the remaining bits are concatenated.
+
+In hexadecimal: 3F FA
+In decimal: 16378
+
+
+** Field Keys
+Each field in a protocol buffer message starts with a key, which itelf is a varint. As a varint, this key could be of any number of bytes.
+In the decoded varint, the least significant three bits specify a "wire type" that indicates how to gather following bytes to be decoded as the value.  All more significant bits encode a "field number", corresponding to a field type defined in the ".proto' file that specifyies encoding for this message.
+*** Wire Types
+The following wire types are defined:
+|------+---------------+------------------+----------------------------------------------------------|
+| Code | Code (3 bits) | Wire Type Name   | Encodes                                                  |
+|------+---------------+------------------+----------------------------------------------------------|
+|    0 | '000          | Varint           | int32, int64, uint32, uint64, sint32, sint64, bool, enum |
+|    1 | '001          | 64-bit           | fixed64, sfixed64, double                                |
+|    2 | '010          | Length-delimited | string, bytes, embedded messages, packed repeated fields |
+|    3 | '011          | Start group      | groups (deprecated)                                      |
+|    4 | '100          | End group        | groups (deprecated)                                      |
+|    5 | '101          | 32-bit           | fixed32, sfixed32, float                                 |
+|------+---------------+------------------+----------------------------------------------------------|
+Note: Of the wire types not deprecated, "Varint" is the only wire type for which the encoded set of bytes is of variable length.
+*** Field Numbers
+Field numbers can be any positive integer.
+*** Examples
+Key #x08:
+In binary:    0000 1000
+Wire Type:          000
+Wire Type: 0 (Varint)
+Field Number: 0000 1  
+Field Number: 1
+
+Key #x78:
+In binary:    0111 1000
+Wire Type:          000
+Wire Type: 0 (Varint)
+Field Number: 0111 1  
+Field Number: #d15 
+
+Note: The largest field number that can be encoded in one byte is 15, since any larger number requires more than four bits to encode, since setting the msb to "1" would indicate that the varint holding the field-number and wire-type pair comprises more than one bit.
+
+Key #x8103:
+In binary:    1000 0001 0000 0011
+Strip msbs:    000 0001  000 0011
+Reverse bytes: 000 0011  000 0001
+Wire Type:                    001
+Wire Type: 1 (64 bit)
+Field Number:        11  000 0
+Field Number: #d30
+
+Note: Use of field numbers less than sixteen for encoding commonly used fields is efficient, since field-number-wire-type key varints for these field numbers can be encoded in one byte.
+ 
+
+** Back to Our Original Puzzle
+
+Our encoded message was of a type that contains one field, encoded as
+
+08 A1 01 ; hexadecimal
+
+First is the key, a varint.
+
+First byte:                 #x08 
+First byte:                 #b00001000 ; the msb is zero, so this is the only byte encoding the vrint. 
+First byte, decoded varint: #b1000
+Wire Type:                  #b 000
+Wire Type: 0 (varint)
+Field Number:               #b1
+Field Number: 1 (myvar)
+
+Next is the following encoded varint, holding the value of myvar:
+
+Bytes:                A1       01 ; hexadecimal
+Bytes:                10100001 00000001 ; binary
+Bytes, reversed:      00000001 10100001
+Bytes, msbs stripped:  0000001  0100001
+Value: #b10100001
+Value: #d161
+
